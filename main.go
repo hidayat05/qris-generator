@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -9,6 +10,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	qrcode "github.com/skip2/go-qrcode"
 
@@ -82,8 +84,9 @@ func countryName(code string) string {
 
 func main() {
 	a := app.New()
+	a.Settings().SetTheme(&neumorphicTheme{})
 	w := a.NewWindow("QRIS Generator")
-	w.Resize(fyne.NewSize(900, 700))
+	w.Resize(fyne.NewSize(2560, 1600))
 
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Generate QRIS", generateTab(w)),
@@ -96,6 +99,9 @@ func main() {
 }
 
 func generateTab(w fyne.Window) fyne.CanvasObject {
+	importEntry := widget.NewEntry()
+	importEntry.PlaceHolder = "Paste raw QRIS string to load details..."
+
 	merchantName := widget.NewEntry()
 	merchantName.PlaceHolder = "e.g. TOKO MAKMUR"
 
@@ -161,6 +167,39 @@ func generateTab(w fyne.Window) fyne.CanvasObject {
 	postalCode := widget.NewEntry()
 	postalCode.PlaceHolder = "Optional"
 
+	fixedFee := widget.NewEntry()
+	fixedFee.PlaceHolder = "e.g. 5000"
+	fixedFee.Disable()
+
+	percentFee := widget.NewEntry()
+	percentFee.PlaceHolder = "e.g. 2.50"
+	percentFee.Disable()
+
+	tipTypes := []string{"None", "Prompt for Tip (01)", "Fixed Fee (02)", "Percentage Fee (03)"}
+	tipSelector := widget.NewSelect(tipTypes, func(selected string) {
+		switch selected {
+		case "Prompt for Tip (01)":
+			fixedFee.Disable()
+			fixedFee.SetText("")
+			percentFee.Disable()
+			percentFee.SetText("")
+		case "Fixed Fee (02)":
+			fixedFee.Enable()
+			percentFee.Disable()
+			percentFee.SetText("")
+		case "Percentage Fee (03)":
+			fixedFee.Disable()
+			fixedFee.SetText("")
+			percentFee.Enable()
+		default: // "None"
+			fixedFee.Disable()
+			fixedFee.SetText("")
+			percentFee.Disable()
+			percentFee.SetText("")
+		}
+	})
+	tipSelector.SetSelected("None")
+
 	typeSelector := widget.NewSelect([]string{"Static (no amount)", "Dynamic (with amount)"}, func(s string) {
 		if s == "Dynamic (with amount)" {
 			amount.Enable()
@@ -179,7 +218,71 @@ func generateTab(w fyne.Window) fyne.CanvasObject {
 	qrCanvas.SetMinSize(fyne.NewSize(280, 280))
 	qrCanvas.FillMode = canvas.ImageFillContain
 
+	qrSectionBackground := canvas.NewRectangle(color.White)
+	qrSectionBackground.Hide()
+
+	qrSection := container.NewStack(qrSectionBackground, container.NewCenter(qrCanvas))
+
 	statusLabel := widget.NewLabel("")
+
+	importBtn := widget.NewButton("Load / Import", func() {
+		raw := strings.TrimSpace(importEntry.Text)
+		if raw == "" {
+			dialog.ShowInformation("Import Error", "Please paste a raw QRIS string first", w)
+			return
+		}
+		data, err := qris.ParseQRIS(raw)
+		if err != nil {
+			dialog.ShowError(fmt.Errorf("Failed to parse raw QRIS: %w", err), w)
+			return
+		}
+
+		merchantName.SetText(data.MerchantName)
+		merchantCity.SetText(data.MerchantCity)
+		merchantID.SetText(data.MerchantAccountInfo.MerchantID)
+		if data.MerchantCategoryCode != "" {
+			mcc.SetText(data.MerchantCategoryCode)
+		} else {
+			mcc.SetText("5211")
+		}
+
+		if data.PointOfInitiationMethod == "12" {
+			typeSelector.SetSelected("Dynamic (with amount)")
+			amount.SetText(data.TransactionAmount)
+			amount.Enable()
+		} else {
+			typeSelector.SetSelected("Static (no amount)")
+			amount.SetText("")
+			amount.Disable()
+		}
+
+		if data.TransactionCurrency != "" {
+			currency.SetSelected(currencyName(data.TransactionCurrency))
+		}
+		if data.CountryCode != "" {
+			countryCode.SetSelected(countryName(data.CountryCode))
+		}
+		postalCode.SetText(data.PostalCode)
+
+		if data.TipIndicator != "" {
+			switch data.TipIndicator {
+			case "01":
+				tipSelector.SetSelected("Prompt for Tip (01)")
+			case "02":
+				tipSelector.SetSelected("Fixed Fee (02)")
+				fixedFee.SetText(data.ConvenienceFeeFixed)
+			case "03":
+				tipSelector.SetSelected("Percentage Fee (03)")
+				percentFee.SetText(data.ConvenienceFeePercentage)
+			default:
+				tipSelector.SetSelected("None")
+			}
+		} else {
+			tipSelector.SetSelected("None")
+		}
+
+		statusLabel.SetText("Imported QRIS details successfully!")
+	})
 
 	generateBtn := widget.NewButton("Generate QRIS", func() {
 		if strings.TrimSpace(merchantName.Text) == "" {
@@ -216,6 +319,25 @@ func generateTab(w fyne.Window) fyne.CanvasObject {
 			}
 		}
 
+		switch tipSelector.Selected {
+		case "Prompt for Tip (01)":
+			data.TipIndicator = "01"
+		case "Fixed Fee (02)":
+			data.TipIndicator = "02"
+			data.ConvenienceFeeFixed = strings.TrimSpace(fixedFee.Text)
+			if data.ConvenienceFeeFixed == "" {
+				dialog.ShowInformation("Validation", "Fixed Fee is required", w)
+				return
+			}
+		case "Percentage Fee (03)":
+			data.TipIndicator = "03"
+			data.ConvenienceFeePercentage = strings.TrimSpace(percentFee.Text)
+			if data.ConvenienceFeePercentage == "" {
+				dialog.ShowInformation("Validation", "Percentage Fee is required", w)
+				return
+			}
+		}
+
 		raw := qris.GenerateQRIS(data)
 		resultEntry.SetText(raw)
 		statusLabel.SetText("")
@@ -226,9 +348,13 @@ func generateTab(w fyne.Window) fyne.CanvasObject {
 			return
 		}
 		qr.DisableBorder = true
+		qr.BackgroundColor = color.White
+		qr.ForegroundColor = color.Black
 		img := qr.Image(280)
 		qrCanvas.Image = img
 		qrCanvas.Refresh()
+		qrSectionBackground.Show()
+		qrSectionBackground.Refresh()
 		statusLabel.SetText("QRIS generated successfully!")
 	})
 
@@ -249,9 +375,15 @@ func generateTab(w fyne.Window) fyne.CanvasObject {
 		countryCode.SetSelected("ID - Indonesia")
 		currency.SetSelected("360 - IDR (Indonesian Rupiah)")
 		postalCode.SetText("")
+		tipSelector.SetSelected("None")
+		fixedFee.SetText("")
+		percentFee.SetText("")
+		importEntry.SetText("")
 		resultEntry.SetText("")
 		qrCanvas.Image = nil
 		qrCanvas.Refresh()
+		qrSectionBackground.Hide()
+		qrSectionBackground.Refresh()
 		statusLabel.SetText("")
 	})
 
@@ -265,9 +397,20 @@ func generateTab(w fyne.Window) fyne.CanvasObject {
 		widget.NewFormItem("Postal Code", postalCode),
 		&widget.FormItem{Text: "QR Type", Widget: typeSelector},
 		&widget.FormItem{Text: "Amount", Widget: amount},
+		&widget.FormItem{Text: "Tip / Convenience Fee", Widget: tipSelector},
+		&widget.FormItem{Text: "Convenience Fee (Fixed)", Widget: fixedFee},
+		&widget.FormItem{Text: "Convenience Fee (%)", Widget: percentFee},
+	)
+
+	importContainer := container.NewBorder(
+		nil, nil, nil, importBtn,
+		importEntry,
 	)
 
 	leftSide := container.NewVBox(
+		widget.NewLabelWithStyle("Import Existing QRIS String", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		importContainer,
+		widget.NewSeparator(),
 		widget.NewLabelWithStyle("QRIS Details", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
 		form,
 		container.NewHBox(generateBtn, copyBtn, clearBtn),
@@ -279,12 +422,13 @@ func generateTab(w fyne.Window) fyne.CanvasObject {
 		rightTop, nil, nil, nil,
 		container.NewVSplit(
 			resultEntry,
-			container.NewCenter(qrCanvas),
+			qrSection,
 		),
 	)
 
-	split := container.NewHSplit(leftSide, rightSide)
-	split.Offset = 0.45
+	leftScroll := container.NewVScroll(leftSide)
+	split := container.NewHSplit(leftScroll, rightSide)
+	split.Offset = 0.48
 
 	return split
 }
@@ -326,6 +470,26 @@ func parseTab(w fyne.Window) fyne.CanvasObject {
 		}
 		if data.TransactionAmount != "" {
 			sb.WriteString(fmt.Sprintf("Amount: %s\n", data.TransactionAmount))
+		}
+		if data.TipIndicator != "" {
+			var tipText string
+			switch data.TipIndicator {
+			case "01":
+				tipText = "Prompt for Tip (01)"
+			case "02":
+				tipText = "Fixed Convenience Fee (02)"
+			case "03":
+				tipText = "Percentage Convenience Fee (03)"
+			default:
+				tipText = "Unknown Indicator (" + data.TipIndicator + ")"
+			}
+			sb.WriteString(fmt.Sprintf("Tip Indicator: %s\n", tipText))
+		}
+		if data.ConvenienceFeeFixed != "" {
+			sb.WriteString(fmt.Sprintf("Convenience Fee (Fixed): %s\n", data.ConvenienceFeeFixed))
+		}
+		if data.ConvenienceFeePercentage != "" {
+			sb.WriteString(fmt.Sprintf("Convenience Fee (%%): %s%%\n", data.ConvenienceFeePercentage))
 		}
 		sb.WriteString(fmt.Sprintf("GUID: %s\n", data.MerchantAccountInfo.GUID))
 		sb.WriteString(fmt.Sprintf("PAN: %s\n", data.MerchantAccountInfo.PAN))
@@ -443,4 +607,108 @@ func tlvTreeTab(w fyne.Window) fyne.CanvasObject {
 	resultScroll.SetMinSize(fyne.NewSize(0, 300))
 
 	return container.NewVSplit(topContainer, resultScroll)
+}
+
+type neumorphicTheme struct{}
+
+var _ fyne.Theme = (*neumorphicTheme)(nil)
+
+func (n *neumorphicTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	if variant == theme.VariantDark {
+		switch name {
+		case theme.ColorNameBackground:
+			return color.RGBA{R: 0x1E, G: 0x1E, B: 0x1E, A: 0xFF} // soft pure dark gray
+		case theme.ColorNameHeaderBackground:
+			return color.RGBA{R: 0x15, G: 0x15, B: 0x15, A: 0xFF}
+		case theme.ColorNameButton:
+			return color.RGBA{R: 0x2A, G: 0x2A, B: 0x2A, A: 0xFF} // slightly elevated gray
+		case theme.ColorNameDisabledButton:
+			return color.RGBA{R: 0x1E, G: 0x1E, B: 0x1E, A: 0xFF}
+		case theme.ColorNameInputBackground:
+			return color.RGBA{R: 0x14, G: 0x14, B: 0x14, A: 0xFF} // inset inputs
+		case theme.ColorNameInputBorder:
+			return color.RGBA{R: 0x24, G: 0x24, B: 0x24, A: 0xFF}
+		case theme.ColorNameForeground:
+			return color.RGBA{R: 0xEA, G: 0xEA, B: 0xEA, A: 0xFF} // off-white text
+		case theme.ColorNamePlaceHolder:
+			return color.RGBA{R: 0x76, G: 0x76, B: 0x76, A: 0xFF}
+		case theme.ColorNamePrimary:
+			return color.RGBA{R: 0x81, G: 0x8C, B: 0xF8, A: 0xFF} // Muted indigo
+		case theme.ColorNameHover:
+			return color.RGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xFF}
+		case theme.ColorNamePressed:
+			return color.RGBA{R: 0x18, G: 0x18, B: 0x18, A: 0xFF}
+		case theme.ColorNameFocus:
+			return color.RGBA{R: 0x63, G: 0x66, B: 0xF1, A: 0xFF}
+		case theme.ColorNameSelection:
+			return color.RGBA{R: 0x31, G: 0x2E, B: 0x81, A: 0x80}
+		case theme.ColorNameSeparator:
+			return color.RGBA{R: 0xFF, G: 0xFF, B: 0xFF, A: 0x14} // ultra-lightweight white separator (8% opacity)
+		case theme.ColorNameShadow:
+			return color.RGBA{R: 0x0A, G: 0x0A, B: 0x0A, A: 0xE0}
+		}
+	} else {
+		// VariantLight
+		switch name {
+		case theme.ColorNameBackground:
+			return color.RGBA{R: 0xE0, G: 0xE5, B: 0xEC, A: 0xFF} // Neumorphic background
+		case theme.ColorNameHeaderBackground:
+			return color.RGBA{R: 0xD2, G: 0xD9, B: 0xE4, A: 0xFF}
+		case theme.ColorNameButton:
+			return color.RGBA{R: 0xE0, G: 0xE5, B: 0xEC, A: 0xFF} // matching background for neumorphism
+		case theme.ColorNameDisabledButton:
+			return color.RGBA{R: 0xD2, G: 0xD9, B: 0xE4, A: 0xFF}
+		case theme.ColorNameInputBackground:
+			return color.RGBA{R: 0xD2, G: 0xD9, B: 0xE4, A: 0xFF} // inset inputs
+		case theme.ColorNameInputBorder:
+			return color.RGBA{R: 0xC3, G: 0xCD, B: 0xD8, A: 0xFF}
+		case theme.ColorNameForeground:
+			return color.RGBA{R: 0x2D, G: 0x37, B: 0x48, A: 0xFF} // Slate-800
+		case theme.ColorNamePlaceHolder:
+			return color.RGBA{R: 0x71, G: 0x80, B: 0x96, A: 0xFF}
+		case theme.ColorNamePrimary:
+			return color.RGBA{R: 0x4F, G: 0x46, B: 0xE5, A: 0xFF} // Indigo-600
+		case theme.ColorNameHover:
+			return color.RGBA{R: 0xEC, G: 0xF0, B: 0xF5, A: 0xFF} // hover highlight
+		case theme.ColorNamePressed:
+			return color.RGBA{R: 0xC5, G: 0xCE, B: 0xDB, A: 0xFF} // pressed shadow
+		case theme.ColorNameFocus:
+			return color.RGBA{R: 0x63, G: 0x66, B: 0xF1, A: 0xFF}
+		case theme.ColorNameSelection:
+			return color.RGBA{R: 0xC7, G: 0xD2, B: 0xFE, A: 0xFF}
+		case theme.ColorNameSeparator:
+			return color.RGBA{R: 0x00, G: 0x00, B: 0x00, A: 0x1A} // ultra-lightweight black separator (10% opacity)
+		case theme.ColorNameShadow:
+			return color.RGBA{R: 0x9B, G: 0xAD, B: 0xC6, A: 0x80} // soft neumorphic shadow
+		}
+	}
+	return theme.DefaultTheme().Color(name, variant)
+}
+
+func (n *neumorphicTheme) Size(name fyne.ThemeSizeName) float32 {
+	switch name {
+	case theme.SizeNameInputRadius:
+		return 12 // elegant rounded inputs
+	case theme.SizeNameSelectionRadius:
+		return 8
+	case theme.SizeNamePadding:
+		return 12 // cleaner padding
+	case theme.SizeNameInnerPadding:
+		return 10
+	case theme.SizeNameText:
+		return 14 // highly readable body text
+	case theme.SizeNameHeadingText:
+		return 18
+	case theme.SizeNameSeparatorThickness:
+		return 1 // ultra-thin separator thickness
+	}
+	return theme.DefaultTheme().Size(name)
+}
+
+func (n *neumorphicTheme) Font(style fyne.TextStyle) fyne.Resource {
+	return theme.DefaultTheme().Font(style)
+}
+
+func (n *neumorphicTheme) Icon(name fyne.ThemeIconName) fyne.Resource {
+	return theme.DefaultTheme().Icon(name)
 }

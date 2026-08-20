@@ -270,3 +270,116 @@ func TestFormatTLVs(t *testing.T) {
 		t.Error("formatted output should contain 'Merchant Name'")
 	}
 }
+
+func TestGenerateAndParseWithTipPrompt(t *testing.T) {
+	data := &QRISData{
+		PayloadFormatIndicator: "01",
+		PointOfInitiationMethod: "11",
+		MerchantAccountInfo: MerchantAccountInfo{
+			GUID:       "54",
+			MerchantID: "12345",
+		},
+		MerchantCategoryCode: "5211",
+		TransactionCurrency:  "360",
+		CountryCode:          "ID",
+		MerchantName:         "TOKO TIP PROMPT",
+		MerchantCity:         "JAKARTA",
+		TipIndicator:         "01",
+	}
+
+	raw := GenerateQRIS(data)
+	if !VerifyCRC(raw) {
+		t.Error("CRC verification failed")
+	}
+
+	parsed, err := ParseQRIS(raw)
+	if err != nil {
+		t.Fatalf("ParseQRIS failed: %v", err)
+	}
+
+	if parsed.TipIndicator != "01" {
+		t.Errorf("TipIndicator = %q, want %q", parsed.TipIndicator, "01")
+	}
+	if parsed.ConvenienceFeeFixed != "" {
+		t.Errorf("ConvenienceFeeFixed should be empty, got %q", parsed.ConvenienceFeeFixed)
+	}
+	if parsed.ConvenienceFeePercentage != "" {
+		t.Errorf("ConvenienceFeePercentage should be empty, got %q", parsed.ConvenienceFeePercentage)
+	}
+}
+
+func TestGenerateAndParseWithTipFixed(t *testing.T) {
+	data := &QRISData{
+		PayloadFormatIndicator: "01",
+		PointOfInitiationMethod: "11",
+		MerchantAccountInfo: MerchantAccountInfo{
+			GUID:       "54",
+			MerchantID: "12345",
+		},
+		MerchantCategoryCode: "5211",
+		TransactionCurrency:  "360",
+		CountryCode:          "ID",
+		MerchantName:         "TOKO TIP FIXED",
+		MerchantCity:         "JAKARTA",
+		TipIndicator:         "02",
+		ConvenienceFeeFixed:  "5000",
+	}
+
+	raw := GenerateQRIS(data)
+	if !VerifyCRC(raw) {
+		t.Error("CRC verification failed")
+	}
+
+	parsed, err := ParseQRIS(raw)
+	if err != nil {
+		t.Fatalf("ParseQRIS failed: %v", err)
+	}
+
+	if parsed.TipIndicator != "02" {
+		t.Errorf("TipIndicator = %q, want %q", parsed.TipIndicator, "02")
+	}
+	if parsed.ConvenienceFeeFixed != "5000" {
+		t.Errorf("ConvenienceFeeFixed = %q, want %q", parsed.ConvenienceFeeFixed, "5000")
+	}
+	if parsed.ConvenienceFeePercentage != "" {
+		t.Errorf("ConvenienceFeePercentage should be empty, got %q", parsed.ConvenienceFeePercentage)
+	}
+}
+
+func TestGenerateAndParseWithTipPercentage(t *testing.T) {
+	data := &QRISData{
+		PayloadFormatIndicator: "01",
+		PointOfInitiationMethod: "11",
+		MerchantAccountInfo: MerchantAccountInfo{
+			GUID:       "54",
+			MerchantID: "12345",
+		},
+		MerchantCategoryCode: "5211",
+		TransactionCurrency:  "360",
+		CountryCode:          "ID",
+		MerchantName:         "TOKO TIP PERCENT",
+		MerchantCity:         "JAKARTA",
+		TipIndicator:         "03",
+		ConvenienceFeePercentage: "02.50",
+	}
+
+	raw := GenerateQRIS(data)
+	if !VerifyCRC(raw) {
+		t.Error("CRC verification failed")
+	}
+
+	parsed, err := ParseQRIS(raw)
+	if err != nil {
+		t.Fatalf("ParseQRIS failed: %v", err)
+	}
+
+	if parsed.TipIndicator != "03" {
+		t.Errorf("TipIndicator = %q, want %q", parsed.TipIndicator, "03")
+	}
+	if parsed.ConvenienceFeePercentage != "02.50" {
+		t.Errorf("ConvenienceFeePercentage = %q, want %q", parsed.ConvenienceFeePercentage, "02.50")
+	}
+	if parsed.ConvenienceFeeFixed != "" {
+		t.Errorf("ConvenienceFeeFixed should be empty, got %q", parsed.ConvenienceFeeFixed)
+	}
+}

@@ -26,6 +26,9 @@ type QRISData struct {
 	MerchantName            string
 	MerchantCity            string
 	PostalCode              string
+	TipIndicator            string
+	ConvenienceFeeFixed     string
+	ConvenienceFeePercentage string
 	AdditionalData          AdditionalData
 }
 
@@ -81,6 +84,15 @@ func ParseQRIS(input string) (*QRISData, error) {
 	}
 	if t := FindTLV(tlvs, "54"); t != nil {
 		data.TransactionAmount = t.Value
+	}
+	if t := FindTLV(tlvs, "55"); t != nil {
+		data.TipIndicator = t.Value
+	}
+	if t := FindTLV(tlvs, "56"); t != nil {
+		data.ConvenienceFeeFixed = t.Value
+	}
+	if t := FindTLV(tlvs, "57"); t != nil {
+		data.ConvenienceFeePercentage = t.Value
 	}
 	if t := FindTLV(tlvs, "58"); t != nil {
 		data.CountryCode = t.Value
@@ -159,6 +171,15 @@ func GenerateQRIS(data *QRISData) string {
 
 	if data.TransactionAmount != "" {
 		tlvs = append(tlvs, TLV{Tag: "54", Value: data.TransactionAmount})
+	}
+
+	if data.TipIndicator != "" {
+		tlvs = append(tlvs, TLV{Tag: "55", Value: data.TipIndicator})
+		if data.TipIndicator == "02" && data.ConvenienceFeeFixed != "" {
+			tlvs = append(tlvs, TLV{Tag: "56", Value: data.ConvenienceFeeFixed})
+		} else if data.TipIndicator == "03" && data.ConvenienceFeePercentage != "" {
+			tlvs = append(tlvs, TLV{Tag: "57", Value: data.ConvenienceFeePercentage})
+		}
 	}
 
 	if data.CountryCode == "" {
